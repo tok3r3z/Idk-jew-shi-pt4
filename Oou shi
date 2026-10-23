@@ -1,0 +1,1441 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local SoundService = game:GetService("SoundService")
+local Lighting = game:GetService("Lighting")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local camera = workspace.CurrentCamera
+local mouse = player:GetMouse()
+
+-- Sound Preset Library
+local HitMarkerSounds = {
+    ["COD Modern Warfare"] = "rbxassetid://4590657391",
+    ["Rust Hitsound"] = "rbxassetid://1255040462",
+    ["Skeet / Gamesense"] = "rbxassetid://4817809188",
+    ["Neverlose"] = "rbxassetid://8640790008",
+    ["TF2 Ding"] = "rbxassetid://2868331684",
+    ["Minecraft Hit"] = "rbxassetid://4018616850",
+    ["Bubble Pop"] = "rbxassetid://9114223178",
+    ["Custom Asset ID"] = ""
+}
+
+-- Settings Table (Optimized for iPhone 16e & High-End iOS)
+local Settings = {
+    -- Aim Settings
+    FOV = 130,
+    ShowFOV = true,
+    FOVColor = Color3.fromRGB(255, 80, 80),
+    PracticeEnabled = false,
+    AimMethod = "Aim V1", 
+    WallCheckMethod = "WallCheck V1",
+    TargetPriority = "Closest to Crosshair",
+    MaxDistance = 800,
+    Smoothness = 6,
+    Prediction = 0.14,
+    TargetPart = "Head",
+    TeamCheck = true,
+    WallCheck = false,
+    
+    -- Keybind
+    AimKeybind = "E",
+    AimKeyActive = true,
+
+    -- Mobile Floating Buttons Master & Individual Visibility Toggles
+    MobileButtonsEnabled = true,
+    CamlockActive = false,
+    ShowAimButton = true,
+    ShowCamlockButton = true,
+    ShowJSCamButton = true,
+    ShowSilentButton = true,
+    ShowBridgerButton = true,
+    SilentAimActiveMobile = false,
+    BridgerWesternActiveMobile = false,
+    
+    -- Bridger Western Silent Aim Configurations (Sneeky's Script Integration)
+    BridgerWesternSilentAim = false,
+    BridgerFOVSize = 300,
+    BridgerWallCheck = false,
+
+    -- Extra Mobile Customization Settings
+    MobileButtonSize = 45,
+    MobileButtonTransparency = 0.2,
+    MobileButtonPositionPreset = "Left Side",
+
+    -- Hitmarker Settings
+    HitMarkerEnabled = true,
+    HitMarkerNotifications = true,
+    HitMarkerSelectedSound = "COD Modern Warfare",
+    HitMarkerSoundID = HitMarkerSounds["COD Modern Warfare"],
+    HitMarkerVolume = 1,
+
+    -- ESP Visual Settings
+    ESPHighlights = false,
+    ESPBoxes = false,
+    ESPSkeletons = false,
+    ESPNames = false,
+    ESPDistance = false,
+    ESPHealthBars = false,
+    ESPHealthText = false,
+    ESPHeadDots = false,
+    ESPTracers = false,
+    ESPVisibleCheck = false,
+    
+    -- Custom ESP Colors & Styles
+    ESPColorVisible = Color3.fromRGB(80, 255, 80),
+    ESPColorInvisible = Color3.fromRGB(255, 80, 80),
+    ChamsFillTransparency = 0.5,
+    ChamsOutlineTransparency = 0,
+    ChamsDepthMode = "AlwaysOnTop",
+
+    -- Spoofing Settings
+    SpoofIdentity = false,
+    SpoofedName = player.Name,
+    SpoofedDisplayName = player.DisplayName,
+    SpoofedUserId = player.UserId,
+    
+    SpoofMovement = false,
+    SpoofedWalkSpeed = 16,
+    SpoofedJumpPower = 50,
+
+    -- Angel.LOL Camlock (js camlock v2) Settings
+    AngelCamlockEnabled = false,
+
+    -- Misc Settings
+    ThirdPersonEnabled = false,
+    CameraZoomDistance = 15,
+    FullBrightEnabled = false,
+
+    -- Helper Feature Settings
+    InfiniteJump = false,
+    Noclip = false,
+    AutoClicker = false,
+    AutoClickerCPS = 10,
+
+    -- Safe Silent Aim
+    SilentAimEnabled = false,
+    SilentAimPart = "Head"
+}
+
+-- Backup for Reset
+local DefaultSettings = {}
+for k, v in pairs(Settings) do DefaultSettings[k] = v end
+
+local activeConfigName = "default_config"
+local camlockTargetPlayer = nil
+local angelTargetPlayer = nil
+local currentAimTargetPlayer = nil
+local BlacklistTable = {}
+local targetHealthMemory = {}
+local lastHitmarkerTime = 0
+
+-- ESP Containers
+local activeHighlights = {}
+local activeBoxes = {}
+local activeSkeletons = {}
+local activeNames = {}
+local activeHealthBars = {}
+local activeTracers = {}
+local activeHeadDots = {}
+
+-- Small On-Screen Hit Notification GUI (Top-Left)
+local hitNotifyGui = Instance.new("ScreenGui")
+hitNotifyGui.Name = "JewScriptsHitNotify"
+hitNotifyGui.ResetOnSpawn = false
+hitNotifyGui.IgnoreGuiInset = true
+hitNotifyGui.Parent = playerGui
+
+local hitTextLabel = Instance.new("TextLabel")
+hitTextLabel.Name = "HitNotifyLabel"
+hitTextLabel.Size = UDim2.fromOffset(250, 25)
+hitTextLabel.Position = UDim2.new(0, 15, 0, 15)
+hitTextLabel.BackgroundTransparency = 1
+hitTextLabel.TextColor3 = Color3.fromRGB(80, 255, 80)
+hitTextLabel.TextStrokeTransparency = 0
+hitTextLabel.TextSize = 13
+hitTextLabel.Font = Enum.Font.SourceSansBold
+hitTextLabel.TextXAlignment = Enum.TextXAlignment.Left
+hitTextLabel.Text = ""
+hitTextLabel.Visible = false
+hitTextLabel.Parent = hitNotifyGui
+
+local fadeThread = nil
+local function showSmallNotification(text)
+    hitTextLabel.Text = text
+    hitTextLabel.Visible = true
+    hitTextLabel.TextTransparency = 0
+    hitTextLabel.TextStrokeTransparency = 0
+
+    if fadeThread then task.cancel(fadeThread) end
+    fadeThread = task.delay(1.2, function()
+        for i = 1, 10 do
+            hitTextLabel.TextTransparency = i / 10
+            hitTextLabel.TextStrokeTransparency = i / 10
+            task.wait(0.03)
+        end
+        hitTextLabel.Visible = false
+    end)
+end
+
+local function cleanupPlayer(p)
+    if activeHighlights[p] then activeHighlights[p]:Destroy(); activeHighlights[p] = nil end
+    if activeBoxes[p] then activeBoxes[p]:Destroy(); activeBoxes[p] = nil end
+    if activeNames[p] then activeNames[p]:Destroy(); activeNames[p] = nil end
+    if activeTracers[p] then activeTracers[p]:Destroy(); activeTracers[p] = nil end
+    if activeHeadDots[p] then activeHeadDots[p]:Destroy(); activeHeadDots[p] = nil end
+    if activeHealthBars[p] then
+        if activeHealthBars[p].BG then activeHealthBars[p].BG:Destroy() end
+        activeHealthBars[p] = nil
+    end
+    if activeSkeletons[p] then
+        for _, lineFrame in pairs(activeSkeletons[p]) do lineFrame:Destroy() end
+        activeSkeletons[p] = nil
+    end
+    if camlockTargetPlayer == p then camlockTargetPlayer = nil end
+    if angelTargetPlayer == p then angelTargetPlayer = nil end
+    if currentAimTargetPlayer == p then currentAimTargetPlayer = nil end
+    targetHealthMemory[p] = nil
+end
+
+Players.PlayerRemoving:Connect(cleanupPlayer)
+
+-- Luna UI Loader
+local Luna = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/refs/heads/main/source.lua",
+    true
+))()
+
+local function sendNotification(title, content)
+    pcall(function()
+        if Luna and Luna.Notify then
+            Luna:Notify({ Title = title, Content = content, Duration = 2 })
+        else
+            game:GetService("StarterGui"):SetCore("SendNotification", { Title = title, Text = content, Duration = 2 })
+        end
+    end)
+end
+
+-- Dynamic Hitmarker Audio Trigger with Spam Debounce
+local function playHitMarker(targetPlayer, damageDealt)
+    if not Settings.HitMarkerEnabled then return end
+
+    local now = tick()
+    if now - lastHitmarkerTime < 0.15 then return end
+    lastHitmarkerTime = now
+
+    pcall(function()
+        local sound = Instance.new("Sound")
+        sound.SoundId = Settings.HitMarkerSoundID
+        sound.Volume = Settings.HitMarkerVolume
+        sound.Parent = SoundService
+        sound:Play()
+        sound.Ended:Connect(function()
+            sound:Destroy()
+        end)
+    end)
+
+    if Settings.HitMarkerNotifications and targetPlayer then
+        local dmgText = damageDealt and (" (-" .. math.floor(damageDealt) .. " HP)") or ""
+        showSmallNotification("Hit: " .. targetPlayer.DisplayName .. dmgText)
+    end
+end
+
+-- Native FOV Preview
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "JewScriptsFOV"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = playerGui
+
+local circle = Instance.new("Frame")
+circle.Name = "FOVCircle"
+circle.AnchorPoint = Vector2.new(0.5, 0.5)
+circle.Position = UDim2.fromScale(0.5, 0.5)
+circle.Size = UDim2.fromOffset(Settings.FOV * 2, Settings.FOV * 2)
+circle.BackgroundTransparency = 1
+circle.BorderSizePixel = 0
+circle.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(1, 0)
+corner.Parent = circle
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Settings.FOVColor
+stroke.Thickness = 2
+stroke.Parent = circle
+
+-- Mobile Floating UI
+local mobileGui = Instance.new("ScreenGui")
+mobileGui.Name = "JewScriptsMobileUI"
+mobileGui.ResetOnSpawn = false
+mobileGui.IgnoreGuiInset = true
+mobileGui.Parent = playerGui
+
+local function createFloatingButton(name, defaultPos, text, callback)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Size = UDim2.fromOffset(110, Settings.MobileButtonSize)
+    btn.Position = defaultPos
+    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    btn.BackgroundTransparency = Settings.MobileButtonTransparency
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.SourceSansBold
+    btn.Text = text
+    btn.Visible = Settings.MobileButtonsEnabled
+    btn.Parent = mobileGui
+
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(0, 8)
+    uiCorner.Parent = btn
+
+    local uiStroke = Instance.new("UIStroke")
+    uiStroke.Color = Color3.fromRGB(80, 255, 80)
+    uiStroke.Thickness = 1.5
+    uiStroke.Parent = btn
+
+    local dragging, dragInput, dragStart, startPos
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = btn.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+
+    btn.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            btn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    btn.MouseButton1Click:Connect(function() callback(btn) end)
+    return btn
+end
+
+local aimButton = createFloatingButton("AimToggleButton", UDim2.new(0.05, 0, 0.30, 0), "Aim: OFF", function(btn)
+    Settings.PracticeEnabled = not Settings.PracticeEnabled
+    btn.Text = Settings.PracticeEnabled and "Aim: ON" or "Aim: OFF"
+    btn.BackgroundColor3 = Settings.PracticeEnabled and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(30, 30, 30)
+end)
+
+local camlockButton = createFloatingButton("CamlockButton", UDim2.new(0.05, 0, 0.39, 0), "Camlock: OFF", function(btn)
+    Settings.CamlockActive = not Settings.CamlockActive
+    if Settings.CamlockActive then
+        btn.Text = "Camlock: ON"
+        btn.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
+    else
+        btn.Text = "Camlock: OFF"
+        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        camlockTargetPlayer = nil
+    end
+end)
+
+local jsCamlockV2Button = createFloatingButton("JSCamlockV2Button", UDim2.new(0.05, 0, 0.48, 0), "js cam v2: OFF", function(btn)
+    Settings.AngelCamlockEnabled = not Settings.AngelCamlockEnabled
+    if Settings.AngelCamlockEnabled then
+        btn.Text = "js cam v2: ON"
+        btn.BackgroundColor3 = Color3.fromRGB(120, 40, 120)
+    else
+        btn.Text = "js cam v2: OFF"
+        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        angelTargetPlayer = nil
+    end
+end)
+
+local silentAimButton = createFloatingButton("SilentAimButton", UDim2.new(0.05, 0, 0.57, 0), "Silent: OFF", function(btn)
+    Settings.SilentAimActiveMobile = not Settings.SilentAimActiveMobile
+    Settings.SilentAimEnabled = Settings.SilentAimActiveMobile
+    if Settings.SilentAimActiveMobile then
+        btn.Text = "Silent: ON"
+        btn.BackgroundColor3 = Color3.fromRGB(40, 40, 120)
+    else
+        btn.Text = "Silent: OFF"
+        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    end
+end)
+
+local bridgerButton = createFloatingButton("BridgerButton", UDim2.new(0.05, 0, 0.66, 0), "Bridger: OFF", function(btn)
+    Settings.BridgerWesternActiveMobile = not Settings.BridgerWesternActiveMobile
+    Settings.BridgerWesternSilentAim = Settings.BridgerWesternActiveMobile
+    if Settings.BridgerWesternActiveMobile then
+        btn.Text = "Bridger: ON"
+        btn.BackgroundColor3 = Color3.fromRGB(120, 80, 40)
+        pcall(function()
+            getgenv().sneeky_silent_aim = true
+            getgenv().sneeky_fov_size = Settings.BridgerFOVSize
+            getgenv().sneeky_wallcheck = Settings.BridgerWallCheck
+            loadstring(game:HttpGet("https://sneekysscripts.uk/Scripts/Bridger_Western/main.luau"))()
+        end)
+        sendNotification("Bridger Western", "Sneeky's Silent Aim Loaded!")
+    else
+        btn.Text = "Bridger: OFF"
+        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        getgenv().sneeky_silent_aim = false
+    end
+end)
+
+local function updateButtonVisibility()
+    aimButton.Visible = Settings.MobileButtonsEnabled and Settings.ShowAimButton
+    camlockButton.Visible = Settings.MobileButtonsEnabled and Settings.ShowCamlockButton
+    jsCamlockV2Button.Visible = Settings.MobileButtonsEnabled and Settings.ShowJSCamButton
+    silentAimButton.Visible = Settings.MobileButtonsEnabled and Settings.ShowSilentButton
+    bridgerButton.Visible = Settings.MobileButtonsEnabled and Settings.ShowBridgerButton
+end
+
+local espScreenGui = Instance.new("ScreenGui")
+espScreenGui.Name = "JewScriptsESP"
+espScreenGui.ResetOnSpawn = false
+espScreenGui.IgnoreGuiInset = true
+espScreenGui.Parent = playerGui
+
+-- Luna Window Initialization
+local Window = Luna:CreateWindow({
+    Name = "Jew Scripts",
+    Subtitle = "Created by tok3r3z on discord",
+    LogoID = "82795327169782",
+    LoadingEnabled = true,
+    LoadingTitle = "Jew Scripts Hub",
+    LoadingSubtitle = "Created by tok3r3z on discord",
+    ConfigSettings = { RootFolder = nil, ConfigFolder = "JewScripts" },
+    KeySystem = false,
+    ToggleKey = Enum.KeyCode.RightControl
+})
+
+-- Persistent UI Toggle Listener
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.RightControl then
+        if Window and Window.Toggle then
+            Window:Toggle()
+        end
+    end
+end)
+
+-- UI Tabs
+local MainTab = Window:CreateTab({ Name = "Main", Icon = "home", ImageSource = "Material", ShowTitle = true })
+local AngelTab = Window:CreateTab({ Name = "js camlock v2", Icon = "bolt", ImageSource = "Material", ShowTitle = true })
+local BridgerTab = Window:CreateTab({ Name = "Bridger Western", Icon = "star", ImageSource = "Material", ShowTitle = true })
+local AimTab = Window:CreateTab({ Name = "Aimbot", Icon = "gps_fixed", ImageSource = "Material", ShowTitle = true })
+local ESPTab = Window:CreateTab({ Name = "ESP Features", Icon = "visibility", ImageSource = "Material", ShowTitle = true })
+local SpoofTab = Window:CreateTab({ Name = "Spoofing", Icon = "face", ImageSource = "Material", ShowTitle = true })
+local MiscTab = Window:CreateTab({ Name = "Misc", Icon = "build", ImageSource = "Material", ShowTitle = true })
+local MobileTab = Window:CreateTab({ Name = "Mobile", Icon = "smartphone", ImageSource = "Material", ShowTitle = true })
+local BlacklistTab = Window:CreateTab({ Name = "Blacklist", Icon = "block", ImageSource = "Material", ShowTitle = true })
+local ConfigTab = Window:CreateTab({ Name = "Config", Icon = "settings", ImageSource = "Material", ShowTitle = true })
+
+MainTab:CreateParagraph({ Title = "Jew Scripts", Text = "Official script suite created by tok3r3z on discord" })
+
+-- Bridger Western Tab Implementation
+BridgerTab:CreateParagraph({ Title = "Bridger Western Silent Aim", Text = "Sneeky's Keyless Silent Aim integration for bridger: WESTERN." })
+
+BridgerTab:CreateToggle({
+    Name = "Enable Bridger Western Silent Aim",
+    CurrentValue = Settings.BridgerWesternSilentAim,
+    Callback = function(v)
+        Settings.BridgerWesternSilentAim = v
+        Settings.BridgerWesternActiveMobile = v
+        bridgerButton.Text = v and "Bridger: ON" or "Bridger: OFF"
+        bridgerButton.BackgroundColor3 = v and Color3.fromRGB(120, 80, 40) or Color3.fromRGB(30, 30, 30)
+        
+        if v then
+            pcall(function()
+                getgenv().sneeky_silent_aim = true
+                getgenv().sneeky_fov_size = Settings.BridgerFOVSize
+                getgenv().sneeky_wallcheck = Settings.BridgerWallCheck
+                loadstring(game:HttpGet("https://sneekysscripts.uk/Scripts/Bridger_Western/main.luau"))()
+            end)
+            sendNotification("Bridger Western", "Sneeky's Silent Aim Loaded!")
+        else
+            getgenv().sneeky_silent_aim = false
+        end
+    end
+}, "BridgerSilentAimToggle")
+
+BridgerTab:CreateSlider({
+    Name = "Bridger Silent Aim FOV",
+    Range = {50, 600},
+    Increment = 10,
+    CurrentValue = Settings.BridgerFOVSize,
+    Callback = function(v)
+        Settings.BridgerFOVSize = v
+        getgenv().sneeky_fov_size = v
+    end
+}, "BridgerFOVSlider")
+
+BridgerTab:CreateToggle({
+    Name = "Bridger Wall Check",
+    CurrentValue = Settings.BridgerWallCheck,
+    Callback = function(v)
+        Settings.BridgerWallCheck = v
+        getgenv().sneeky_wallcheck = v
+    end
+}, "BridgerWallCheckToggle")
+
+-- js camlock v2 Tab Implementation
+AngelTab:CreateParagraph({ Title = "js camlock v2 Suite", Text = "Integrated smart camlock and target tracking system." })
+
+AngelTab:CreateToggle({
+    Name = "Enable js camlock v2",
+    CurrentValue = Settings.AngelCamlockEnabled,
+    Callback = function(v)
+        Settings.AngelCamlockEnabled = v
+        if not v then angelTargetPlayer = nil end
+        jsCamlockV2Button.Text = v and "js cam v2: ON" or "js cam v2: OFF"
+        jsCamlockV2Button.BackgroundColor3 = v and Color3.fromRGB(120, 40, 120) or Color3.fromRGB(30, 30, 30)
+    end
+}, "AngelCamlockToggle")
+
+-- Misc Tab Implementation
+MiscTab:CreateParagraph({ Title = "Miscellaneous Utilities", Text = "Extra utilities including full bright, third person, and unlisted helper features." })
+
+MiscTab:CreateToggle({
+    Name = "Full Bright",
+    CurrentValue = Settings.FullBrightEnabled,
+    Callback = function(v)
+        Settings.FullBrightEnabled = v
+        if v then
+            Lighting.Brightness = 2
+            Lighting.ClockTime = 14
+            Lighting.GlobalShadows = false
+            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        else
+            Lighting.GlobalShadows = true
+            Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+        end
+    end
+}, "FullBrightToggle")
+
+MiscTab:CreateToggle({
+    Name = "Third Person View",
+    CurrentValue = Settings.ThirdPersonEnabled,
+    Callback = function(v)
+        Settings.ThirdPersonEnabled = v
+        if v then
+            player.CameraMode = Enum.CameraMode.Classic
+            player.CameraMaxZoomDistance = Settings.CameraZoomDistance
+            player.CameraMinZoomDistance = Settings.CameraZoomDistance
+        else
+            player.CameraMaxZoomDistance = 400
+            player.CameraMinZoomDistance = 0.5
+        end
+    end
+}, "ThirdPersonToggle")
+
+MiscTab:CreateSlider({
+    Name = "Third Person Distance",
+    Range = {5, 50},
+    Increment = 1,
+    CurrentValue = Settings.CameraZoomDistance,
+    Callback = function(v)
+        Settings.CameraZoomDistance = v
+        if Settings.ThirdPersonEnabled then
+            player.CameraMaxZoomDistance = v
+            player.CameraMinZoomDistance = v
+        end
+    end
+}, "TPDistanceSlider")
+
+MiscTab:CreateToggle({
+    Name = "Infinite Jump (Unlisted)",
+    CurrentValue = Settings.InfiniteJump,
+    Callback = function(v) Settings.InfiniteJump = v end
+}, "InfJumpToggle")
+
+MiscTab:CreateToggle({
+    Name = "Noclip (Unlisted)",
+    CurrentValue = Settings.Noclip,
+    Callback = function(v) Settings.Noclip = v end
+}, "NoclipToggle")
+
+MiscTab:CreateToggle({
+    Name = "Auto-Clicker (Unlisted)",
+    CurrentValue = Settings.AutoClicker,
+    Callback = function(v) Settings.AutoClicker = v end
+}, "AutoClickerToggle")
+
+MiscTab:CreateSlider({
+    Name = "Auto-Clicker CPS",
+    Range = {1, 30},
+    Increment = 1,
+    CurrentValue = Settings.AutoClickerCPS,
+    Callback = function(v) Settings.AutoClickerCPS = v end
+}, "AutoClickerCPSSlider")
+
+-- Mobile Tab Customizer Options (Individual button toggles)
+MobileTab:CreateParagraph({ Title = "Floating Controls Customizer", Text = "Customize appearance, layout, and choose which buttons appear on screen." })
+
+MobileTab:CreateToggle({
+    Name = "Show Floating Mobile Buttons Master",
+    CurrentValue = Settings.MobileButtonsEnabled,
+    Callback = function(value)
+        Settings.MobileButtonsEnabled = value
+        updateButtonVisibility()
+    end
+}, "MobileButtonsToggle")
+
+MobileTab:CreateToggle({
+    Name = "Show Aim Button",
+    CurrentValue = Settings.ShowAimButton,
+    Callback = function(value)
+        Settings.ShowAimButton = value
+        updateButtonVisibility()
+    end
+}, "ShowAimBtnToggle")
+
+MobileTab:CreateToggle({
+    Name = "Show Camlock Button",
+    CurrentValue = Settings.ShowCamlockButton,
+    Callback = function(value)
+        Settings.ShowCamlockButton = value
+        updateButtonVisibility()
+    end
+}, "ShowCamlockBtnToggle")
+
+MobileTab:CreateToggle({
+    Name = "Show JS Camlock V2 Button",
+    CurrentValue = Settings.ShowJSCamButton,
+    Callback = function(value)
+        Settings.ShowJSCamButton = value
+        updateButtonVisibility()
+    end
+}, "ShowJSCamBtnToggle")
+
+MobileTab:CreateToggle({
+    Name = "Show Silent Aim Button",
+    CurrentValue = Settings.ShowSilentButton,
+    Callback = function(value)
+        Settings.ShowSilentButton = value
+        updateButtonVisibility()
+    end
+}, "ShowSilentBtnToggle")
+
+MobileTab:CreateToggle({
+    Name = "Show Bridger Western Button",
+    CurrentValue = Settings.ShowBridgerButton,
+    Callback = function(value)
+        Settings.ShowBridgerButton = value
+        updateButtonVisibility()
+    end
+}, "ShowBridgerBtnToggle")
+
+MobileTab:CreateSlider({
+    Name = "Button Height Size",
+    Range = {30, 80},
+    Increment = 5,
+    CurrentValue = Settings.MobileButtonSize,
+    Callback = function(v)
+        Settings.MobileButtonSize = v
+        aimButton.Size = UDim2.fromOffset(110, v)
+        camlockButton.Size = UDim2.fromOffset(110, v)
+        jsCamlockV2Button.Size = UDim2.fromOffset(110, v)
+        silentAimButton.Size = UDim2.fromOffset(110, v)
+        bridgerButton.Size = UDim2.fromOffset(110, v)
+    end
+}, "MobileButtonSizeSlider")
+
+MobileTab:CreateSlider({
+    Name = "Button Transparency",
+    Range = {0, 0.8},
+    Increment = 0.05,
+    CurrentValue = Settings.MobileButtonTransparency,
+    Callback = function(v)
+        Settings.MobileButtonTransparency = v
+        aimButton.BackgroundTransparency = v
+        camlockButton.BackgroundTransparency = v
+        jsCamlockV2Button.BackgroundTransparency = v
+        silentAimButton.BackgroundTransparency = v
+        bridgerButton.BackgroundTransparency = v
+    end
+}, "MobileButtonTransSlider")
+
+-- Hitmarker Options
+AimTab:CreateParagraph({ Title = "Hitmarker Options", Text = "Audio & visual hit notifications when locked target health drops." })
+
+AimTab:CreateToggle({
+    Name = "Enable Hitmarker Sound",
+    CurrentValue = Settings.HitMarkerEnabled,
+    Callback = function(v) Settings.HitMarkerEnabled = v end
+}, "HitMarkerToggle")
+
+AimTab:CreateToggle({
+    Name = "Enable Hitmarker Notifications",
+    CurrentValue = Settings.HitMarkerNotifications,
+    Callback = function(v) Settings.HitMarkerNotifications = v end
+}, "HitMarkerNotifyToggle")
+
+local soundPresetNames = {"COD Modern Warfare", "Rust Hitsound", "Skeet / Gamesense", "Neverlose", "TF2 Ding", "Minecraft Hit", "Bubble Pop", "Custom Asset ID"}
+
+AimTab:CreateDropdown({
+    Name = "Hitmarker Sound Preset",
+    Options = soundPresetNames,
+    CurrentOption = {Settings.HitMarkerSelectedSound},
+    MultipleOptions = false,
+    Callback = function(v)
+        local soundName = type(v) == "table" and v[1] or v
+        Settings.HitMarkerSelectedSound = soundName
+        if soundName ~= "Custom Asset ID" then
+            Settings.HitMarkerSoundID = HitMarkerSounds[soundName]
+        end
+        playHitMarker(nil, nil)
+    end
+}, "HitMarkerPresetDropdown")
+
+AimTab:CreateInput({
+    Name = "Custom Sound Asset ID",
+    PlaceholderText = "rbxassetid://...",
+    Callback = function(text)
+        local val = type(text) == "table" and (text.Text or text[1]) or tostring(text or "")
+        if val ~= "" then 
+            Settings.HitMarkerSoundID = val 
+            Settings.HitMarkerSelectedSound = "Custom Asset ID"
+            playHitMarker(nil, nil)
+        end
+    end
+}, "HitMarkerIDInput")
+
+AimTab:CreateButton({
+    Name = "Test Selected Sound",
+    Callback = function()
+        playHitMarker(nil, nil)
+    end
+})
+
+AimTab:CreateSlider({
+    Name = "Hitmarker Volume",
+    Range = {0.1, 3},
+    Increment = 0.1,
+    CurrentValue = Settings.HitMarkerVolume,
+    Callback = function(v) Settings.HitMarkerVolume = v end
+}, "HitMarkerVolSlider")
+
+local manualInputName = ""
+BlacklistTab:CreateInput({
+    Name = "Blacklist by Name",
+    PlaceholderText = "Enter exact username...",
+    Callback = function(text) 
+        manualInputName = type(text) == "table" and (text.Text or text[1]) or tostring(text or "")
+    end
+}, "BlacklistInput")
+
+BlacklistTab:CreateButton({
+    Name = "Add Typed Name to Blacklist",
+    Callback = function()
+        if manualInputName ~= "" then BlacklistTable[manualInputName:lower()] = true end
+    end
+})
+
+for _, p in ipairs(Players:GetPlayers()) do
+    if p ~= player then
+        BlacklistTab:CreateToggle({
+            Name = p.Name .. " (" .. p.DisplayName .. ")",
+            CurrentValue = false,
+            Callback = function(state)
+                BlacklistTable[p.Name:lower()] = state
+                BlacklistTable[p.DisplayName:lower()] = state
+            end
+        }, "Blacklist_" .. p.Name)
+    end
+end
+
+AimTab:CreateToggle({ Name = "Aimbot Master Toggle", CurrentValue = Settings.PracticeEnabled, Callback = function(v) Settings.PracticeEnabled = v end }, "PracticeEnabled")
+AimTab:CreateBind({ Name = "Aimbot Activation Key", CurrentBind = Settings.AimKeybind, HoldToInteract = false, Callback = function() Settings.AimKeyActive = not Settings.AimKeyActive end }, "AimKeybind")
+AimTab:CreateToggle({ Name = "Enable Crash-Free Silent Aim", CurrentValue = Settings.SilentAimEnabled, Callback = function(v) 
+    Settings.SilentAimEnabled = v 
+    Settings.SilentAimActiveMobile = v
+    silentAimButton.Text = v and "Silent: ON" or "Silent: OFF"
+    silentAimButton.BackgroundColor3 = v and Color3.fromRGB(40, 40, 120) or Color3.fromRGB(30, 30, 30)
+end }, "SilentAimToggle")
+AimTab:CreateDropdown({ Name = "Silent Aim Target Part", Options = {"Head", "UpperTorso", "HumanoidRootPart"}, CurrentOption = {Settings.SilentAimPart}, MultipleOptions = false, Callback = function(v) Settings.SilentAimPart = type(v) == "table" and v[1] or v end }, "SilentAimPartDropdown")
+AimTab:CreateDropdown({ Name = "Aim Method", Options = {"Aim V1", "Aim V2", "Aim V3"}, CurrentOption = {Settings.AimMethod}, MultipleOptions = false, Callback = function(v) Settings.AimMethod = type(v) == "table" and v[1] or v end }, "AimMethod")
+AimTab:CreateDropdown({ Name = "Target Priority", Options = {"Closest to Crosshair", "Closest Distance", "Lowest Health"}, CurrentOption = {Settings.TargetPriority}, MultipleOptions = false, Callback = function(v) Settings.TargetPriority = type(v) == "table" and v[1] or v end }, "TargetPriority")
+AimTab:CreateDropdown({ Name = "Wall Check Method", Options = {"WallCheck V1", "WallCheck V2", "WallCheck V3"}, CurrentOption = {Settings.WallCheckMethod}, MultipleOptions = false, Callback = function(v) Settings.WallCheckMethod = type(v) == "table" and v[1] or v end }, "WallCheckMethod")
+AimTab:CreateSlider({ Name = "Max Target Distance", Range = {100, 2500}, Increment = 50, CurrentValue = Settings.MaxDistance, Callback = function(v) Settings.MaxDistance = v end }, "MaxDistance")
+AimTab:CreateSlider({ Name = "FOV Radius", Range = {30, 600}, Increment = 5, CurrentValue = Settings.FOV, Callback = function(v) Settings.FOV = v; circle.Size = UDim2.fromOffset(v * 2, v * 2) end }, "AimFOV")
+AimTab:CreateToggle({ Name = "Show FOV Circle", CurrentValue = Settings.ShowFOV, Callback = function(v) Settings.ShowFOV = v; circle.Visible = v end }, "ShowFOV")
+AimTab:CreateColorPicker({ Name = "FOV Circle Color", Color = Settings.FOVColor, Callback = function(c) Settings.FOVColor = c; stroke.Color = c end }, "FOVColor")
+AimTab:CreateToggle({ Name = "Team Check", CurrentValue = Settings.TeamCheck, Callback = function(v) Settings.TeamCheck = v end }, "TeamCheck")
+AimTab:CreateToggle({ Name = "Wall Check", CurrentValue = Settings.WallCheck, Callback = function(v) Settings.WallCheck = v end }, "WallCheck")
+AimTab:CreateSlider({ Name = "Smoothness", Range = {0, 25}, Increment = 1, CurrentValue = Settings.Smoothness, Callback = function(v) Settings.Smoothness = v end }, "AimSmoothness")
+AimTab:CreateSlider({ Name = "Prediction", Range = {0, 0.4}, Increment = 0.005, CurrentValue = Settings.Prediction, Callback = function(v) Settings.Prediction = v end }, "AimPrediction")
+AimTab:CreateDropdown({ Name = "Target Part", Options = {"Head", "UpperTorso", "HumanoidRootPart", "LowerTorso"}, CurrentOption = {Settings.TargetPart}, MultipleOptions = false, Callback = function(v) Settings.TargetPart = type(v) == "table" and v[1] or v end }, "TargetPart")
+
+ESPTab:CreateToggle({ Name = "Enable Highlights (Charms)", CurrentValue = Settings.ESPHighlights, Callback = function(v) Settings.ESPHighlights = v end }, "ESPHighlights")
+ESPTab:CreateToggle({ Name = "Enable ESP Boxes", CurrentValue = Settings.ESPBoxes, Callback = function(v) Settings.ESPBoxes = v end }, "ESPBoxes")
+ESPTab:CreateToggle({ Name = "Enable Health Bars", CurrentValue = Settings.ESPHealthBars, Callback = function(v) Settings.ESPHealthBars = v end }, "ESPHealthBars")
+ESPTab:CreateToggle({ Name = "Enable Health Numbers Text", CurrentValue = Settings.ESPHealthText, Callback = function(v) Settings.ESPHealthText = v end }, "ESPHealthText")
+ESPTab:CreateToggle({ Name = "Enable Head Dot ESP", CurrentValue = Settings.ESPHeadDots, Callback = function(v) Settings.ESPHeadDots = v end }, "ESPHeadDots")
+ESPTab:CreateToggle({ Name = "Enable Skeleton ESP", CurrentValue = Settings.ESPSkeletons, Callback = function(v) Settings.ESPSkeletons = v end }, "ESPSkeletons")
+ESPTab:CreateToggle({ Name = "Enable Name ESP", CurrentValue = Settings.ESPNames, Callback = function(v) Settings.ESPNames = v end }, "ESPNames")
+ESPTab:CreateToggle({ Name = "Enable Distance ESP", CurrentValue = Settings.ESPDistance, Callback = function(v) Settings.ESPDistance = v end }, "ESPDistance")
+ESPTab:CreateToggle({ Name = "Enable Tracers", CurrentValue = Settings.ESPTracers, Callback = function(v) Settings.ESPTracers = v end }, "ESPTracers")
+ESPTab:CreateToggle({ Name = "Visible Check (ESP Colors)", CurrentValue = Settings.ESPVisibleCheck, Callback = function(v) Settings.ESPVisibleCheck = v end }, "VisibleCheck")
+ESPTab:CreateColorPicker({ Name = "Visible Target Color", Color = Settings.ESPColorVisible, Callback = function(c) Settings.ESPColorVisible = c end }, "ESPColorVisible")
+ESPTab:CreateColorPicker({ Name = "Invisible Target Color", Color = Settings.ESPColorInvisible, Callback = function(c) Settings.ESPColorInvisible = c end }, "ESPColorInvisible")
+ESPTab:CreateSlider({ Name = "Chams Fill Transparency", Range = {0, 1}, Increment = 0.05, CurrentValue = Settings.ChamsFillTransparency, Callback = function(v) Settings.ChamsFillTransparency = v end }, "ChamsFillTransparency")
+ESPTab:CreateDropdown({ Name = "Chams Depth Mode", Options = {"AlwaysOnTop", "Occluded"}, CurrentOption = {Settings.ChamsDepthMode}, MultipleOptions = false, Callback = function(v) Settings.ChamsDepthMode = type(v) == "table" and v[1] or v end }, "ChamsDepthMode")
+
+-- SPOOF TAB CONTROLS
+SpoofTab:CreateParagraph({
+    Title = "Movement & Identity Controls",
+    Text = "Safe local property overrides."
+})
+
+SpoofTab:CreateParagraph({
+    Title = "Device Platform Spoofer",
+    Text = "Device Platform Spoofer: [ Coming Soon ]"
+})
+
+SpoofTab:CreateToggle({
+    Name = "Enable Movement Spoofing",
+    CurrentValue = Settings.SpoofMovement,
+    Callback = function(value) Settings.SpoofMovement = value end
+}, "SpoofMovementToggle")
+
+SpoofTab:CreateSlider({
+    Name = "Spoofed WalkSpeed",
+    Range = {16, 250},
+    Increment = 1,
+    CurrentValue = Settings.SpoofedWalkSpeed,
+    Callback = function(value) Settings.SpoofedWalkSpeed = value end
+}, "SpoofWalkSpeed")
+
+SpoofTab:CreateSlider({
+    Name = "Spoofed JumpPower",
+    Range = {50, 300},
+    Increment = 5,
+    CurrentValue = Settings.SpoofedJumpPower,
+    Callback = function(value) Settings.SpoofedJumpPower = value end
+}, "SpoofJumpPower")
+
+-- CONFIG TAB CONTROLS
+ConfigTab:CreateParagraph({
+    Title = "Configuration Manager",
+    Text = "Save and load custom presets for your script settings."
+})
+
+ConfigTab:CreateInput({
+    Name = "Config Preset Name",
+    PlaceholderText = activeConfigName,
+    Callback = function(text)
+        local val = type(text) == "table" and (text.Text or text[1]) or tostring(text or "")
+        if val ~= "" then activeConfigName = val end
+    end
+}, "ConfigFileNameInput")
+
+ConfigTab:CreateButton({
+    Name = "Save Config Preset",
+    Callback = function()
+        if writefile then
+            local dataToSave = {}
+            for k, v in pairs(Settings) do
+                if typeof(v) == "Color3" then
+                    dataToSave[k] = {R = v.R, G = v.G, B = v.B, IsColor = true}
+                else
+                    dataToSave[k] = v
+                end
+            end
+            local success, encoded = pcall(function() return HttpService:JSONEncode(dataToSave) end)
+            if success then
+                writefile("JewScripts_" .. activeConfigName .. ".json", encoded)
+                sendNotification("Config Saved", "Successfully saved: " .. activeConfigName)
+            else
+                sendNotification("Error", "Failed to encode config data.")
+            end
+        else
+            sendNotification("Error", "Executor does not support writefile.")
+        end
+    end
+})
+
+ConfigTab:CreateButton({
+    Name = "Load Config Preset",
+    Callback = function()
+        local fileName = "JewScripts_" .. activeConfigName .. ".json"
+        if readfile and isfile and isfile(fileName) then
+            local raw = readfile(fileName)
+            local success, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+            if success and decoded then
+                for k, v in pairs(decoded) do
+                    if type(v) == "table" and v.IsColor then
+                        Settings[k] = Color3.new(v.R, v.G, v.B)
+                    else
+                        Settings[k] = v
+                    end
+                end
+                circle.Size = UDim2.fromOffset(Settings.FOV * 2, Settings.FOV * 2)
+                stroke.Color = Settings.FOVColor
+                sendNotification("Config Loaded", "Successfully loaded: " .. activeConfigName)
+            else
+                sendNotification("Error", "Failed to decode config file.")
+            end
+        else
+            sendNotification("Error", "Config file '" .. activeConfigName .. "' not found!")
+        end
+    end
+})
+
+ConfigTab:CreateButton({
+    Name = "Reset Settings to Default",
+    Callback = function()
+        for k, v in pairs(DefaultSettings) do Settings[k] = v end
+        circle.Size = UDim2.fromOffset(Settings.FOV * 2, Settings.FOV * 2)
+        stroke.Color = Settings.FOVColor
+        sendNotification("Settings Reset", "All settings reverted to default.")
+    end
+})
+
+local skeletonPairsR15 = {
+    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"}, {"UpperTorso", "LeftUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"}, {"UpperTorso", "RightUpperArm"},
+    {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"}, {"LowerTorso", "LeftUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"}, {"LowerTorso", "RightUpperLeg"},
+    {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}
+}
+
+local skeletonPairsR6 = {
+    {"Head", "Torso"}, {"Torso", "Left Arm"}, {"Torso", "Right Arm"}, {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
+}
+
+-- Fast Raycast Wall Check
+local function isPartVisibleV1(targetPart, character)
+    local rayOrigin = camera.CFrame.Position
+    local rayDirection = targetPart.Position - rayOrigin
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {player.Character, character}
+    return workspace:Raycast(rayOrigin, rayDirection, raycastParams) == nil
+end
+
+local function isPartVisible(targetPart, character)
+    return isPartVisibleV1(targetPart, character)
+end
+
+-- Infinite Jump Listener Connection
+UserInputService.JumpRequest:Connect(function()
+    if Settings.InfiniteJump and player.Character then
+        local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+        if humanoidRootPart then
+            humanoidRootPart.AssemblyLinearVelocity = Vector3.new(humanoidRootPart.AssemblyLinearVelocity.X, 50, humanoidRootPart.AssemblyLinearVelocity.Z)
+        end
+    end
+end)
+
+-- Auto-Clicker Loop Background Handler
+task.spawn(function()
+    while true do
+        if Settings.AutoClicker then
+            pcall(function()
+                mouse1click()
+            end)
+            task.wait(1 / Settings.AutoClickerCPS)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+-- Crash-Free Safe Silent Aim Target Getter & Bullet Redirection
+local function getSilentAimTarget()
+    local bestTarget = nil
+    local bestDist = Settings.FOV
+    local viewportCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local passesTeamCheck = not (Settings.TeamCheck and player.Team and p.Team and p.Team == player.Team)
+            local isBlacklisted = BlacklistTable[p.Name:lower()] or BlacklistTable[p.DisplayName:lower()]
+
+            if passesTeamCheck and not isBlacklisted then
+                local character = p.Character
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                local targetPart = character:FindFirstChild(Settings.SilentAimPart)
+
+                if humanoid and humanoid.Health > 0 and targetPart then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - viewportCenter).Magnitude
+                        if dist <= bestDist then
+                            bestDist = dist
+                            bestTarget = targetPart
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
+-- Arsenal Bullet Hit Redirection Hook (Safe & Crash-Free)
+RunService.RenderStepped:Connect(function(deltaTime)
+    if Settings.SilentAimEnabled then
+        local target = getSilentAimTarget()
+        if target and player.Character then
+            pcall(function()
+                local tool = player.Character:FindFirstChildOfClass("Tool")
+                if tool and tool:FindFirstChild("Handle") then
+                    tool.Handle.CFrame = CFrame.new(tool.Handle.Position, target.Position)
+                end
+            end)
+        end
+    end
+end)
+
+-- Render Loop (Restored Full ESP Suite & Optimized for iPhone 16e Performance)
+local renderCounter = 0
+local connection = RunService.RenderStepped:Connect(function(deltaTime)
+    if not circle.Parent then
+        connection:Disconnect()
+        return
+    end
+
+    circle.Visible = Settings.ShowFOV
+
+    -- Enforce Spoof Movement
+    if Settings.SpoofMovement and player.Character then
+        local myHumanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if myHumanoid then
+            myHumanoid.WalkSpeed = Settings.SpoofedWalkSpeed
+            myHumanoid.JumpPower = Settings.SpoofedJumpPower
+        end
+    end
+
+    -- Noclip Enforcer
+    if Settings.Noclip and player.Character then
+        for _, part in ipairs(player.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+
+    -- js camlock v2 Logic Handler with Smooth Lerp
+    if Settings.AngelCamlockEnabled then
+        if not angelTargetPlayer or not angelTargetPlayer.Character or not angelTargetPlayer.Character:FindFirstChildOfClass("Humanoid") or angelTargetPlayer.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
+            local closest, dist = nil, math.huge
+            local vp = camera.ViewportSize
+            local mid = Vector2.new(vp.X/2, vp.Y/2)
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and p.Character then
+                    local h = p.Character:FindFirstChildOfClass("Humanoid")
+                    if h and h.Health > 0 then
+                        local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local pos, on = camera:WorldToViewportPoint(hrp.Position)
+                            if on then
+                                local m = (Vector2.new(pos.X, pos.Y) - mid).Magnitude
+                                if m < dist then
+                                    dist = m
+                                    closest = p
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            angelTargetPlayer = closest
+        end
+
+        if angelTargetPlayer and angelTargetPlayer.Character then
+            local prt = angelTargetPlayer.Character:FindFirstChild("HumanoidRootPart") or angelTargetPlayer.Character:FindFirstChild("Head")
+            if prt then
+                local targetCFrame = CFrame.new(camera.CFrame.Position, prt.Position)
+                camera.CFrame = camera.CFrame:Lerp(targetCFrame, math.clamp(deltaTime * 15, 0.1, 1))
+            end
+        end
+    end
+
+    -- Full ESP Suite Rendering Loop
+    renderCounter = renderCounter + 1
+    if renderCounter % 2 == 0 then
+        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+            if otherPlayer ~= player then
+                local character = otherPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+                if character and humanoid and humanoid.Health > 0 and character.Parent and character:IsDescendantOf(workspace) then
+                    local isSameTeam = Settings.TeamCheck and player.Team and otherPlayer.Team and (otherPlayer.Team == player.Team)
+                    local isBlacklisted = BlacklistTable[otherPlayer.Name:lower()] or BlacklistTable[otherPlayer.DisplayName:lower()]
+                    
+                    if not isSameTeam and not isBlacklisted then
+                        local targetCheckPart = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+                        local isVisible = targetCheckPart and isPartVisible(targetCheckPart, character)
+                        local activeColor = Settings.ESPVisibleCheck and (isVisible and Settings.ESPColorVisible or Settings.ESPColorInvisible) or Color3.fromRGB(255, 255, 255)
+
+                        local cf, size = character:GetBoundingBox()
+                        local screenPos, onScreen = camera:WorldToViewportPoint(cf.Position)
+                        local scaleFactor = onScreen and (1 / (screenPos.Z * math.tan(math.rad(camera.FieldOfView / 2)) * 2) * 1000) or 0
+                        local boxWidth = math.clamp(size.X * scaleFactor, 15, 300)
+                        local boxHeight = math.clamp(size.Y * scaleFactor, 20, 500)
+                        local boxX = screenPos.X - boxWidth / 2
+                        local boxY = screenPos.Y - boxHeight / 2
+
+                        -- 1. Charms / Highlights
+                        if Settings.ESPHighlights then
+                            local highlight = activeHighlights[otherPlayer]
+                            if not highlight or highlight.Parent ~= character then
+                                if highlight then highlight:Destroy() end
+                                highlight = Instance.new("Highlight")
+                                highlight.Name = "JewScriptsHighlight"
+                                highlight.Parent = character
+                                activeHighlights[otherPlayer] = highlight
+                            end
+                            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            highlight.FillTransparency = Settings.ChamsFillTransparency
+                            highlight.OutlineTransparency = Settings.ChamsOutlineTransparency
+                            highlight.FillColor = activeColor
+                            highlight.OutlineColor = activeColor
+                        elseif activeHighlights[otherPlayer] then
+                            activeHighlights[otherPlayer]:Destroy()
+                            activeHighlights[otherPlayer] = nil
+                        end
+
+                        -- 2. ESP Boxes
+                        if Settings.ESPBoxes and onScreen then
+                            local boxFrame = activeBoxes[otherPlayer]
+                            local strokeObj
+                            if not boxFrame then
+                                boxFrame = Instance.new("Frame")
+                                boxFrame.BackgroundTransparency = 1
+                                boxFrame.BorderSizePixel = 0
+                                strokeObj = Instance.new("UIStroke")
+                                strokeObj.Thickness = 1.5
+                                strokeObj.Parent = boxFrame
+                                boxFrame.Parent = espScreenGui
+                                activeBoxes[otherPlayer] = boxFrame
+                            else
+                                strokeObj = boxFrame:FindFirstChildOfClass("UIStroke")
+                            end
+                            if strokeObj then strokeObj.Color = activeColor end
+                            boxFrame.Size = UDim2.fromOffset(boxWidth, boxHeight)
+                            boxFrame.Position = UDim2.fromOffset(boxX, boxY)
+                            boxFrame.Visible = true
+                        elseif activeBoxes[otherPlayer] then
+                            activeBoxes[otherPlayer].Visible = false
+                        end
+
+                        -- 3. Health Bars
+                        if Settings.ESPHealthBars and onScreen then
+                            local hpData = activeHealthBars[otherPlayer]
+                            if not hpData or not hpData.BG or not hpData.BG.Parent then
+                                local bg = Instance.new("Frame")
+                                bg.Name = "HP_BG"
+                                bg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+                                bg.BorderSizePixel = 0
+                                bg.Parent = espScreenGui
+
+                                local fill = Instance.new("Frame")
+                                fill.Name = "HP_Fill"
+                                fill.BorderSizePixel = 0
+                                fill.AnchorPoint = Vector2.new(0, 1)
+                                fill.Position = UDim2.fromScale(0, 1)
+                                fill.Parent = bg
+
+                                hpData = {BG = bg, Fill = fill}
+                                activeHealthBars[otherPlayer] = hpData
+                            end
+
+                            local curHp = math.clamp(humanoid.Health, 0, humanoid.MaxHealth)
+                            local maxHp = math.max(humanoid.MaxHealth, 1)
+                            local healthPercent = math.clamp(curHp / maxHp, 0, 1)
+
+                            hpData.BG.Size = UDim2.fromOffset(4, boxHeight)
+                            hpData.BG.Position = UDim2.fromOffset(boxX - 7, boxY)
+                            hpData.Fill.Size = UDim2.fromScale(1, healthPercent)
+                            hpData.Fill.BackgroundColor3 = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), healthPercent)
+                            hpData.BG.Visible = true
+                        elseif activeHealthBars[otherPlayer] and activeHealthBars[otherPlayer].BG then
+                            activeHealthBars[otherPlayer].BG.Visible = false
+                        end
+
+                        -- 4. Head Dots
+                        local headPart = character:FindFirstChild("Head")
+                        if Settings.ESPHeadDots and headPart then
+                            local headPos, headOnScreen = camera:WorldToViewportPoint(headPart.Position)
+                            if headOnScreen then
+                                local dotFrame = activeHeadDots[otherPlayer]
+                                if not dotFrame then
+                                    dotFrame = Instance.new("Frame")
+                                    dotFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+                                    dotFrame.Size = UDim2.fromOffset(6, 6)
+                                    dotFrame.BorderSizePixel = 0
+                                    local uiCorner = Instance.new("UICorner")
+                                    uiCorner.CornerRadius = UDim.new(1, 0)
+                                    uiCorner.Parent = dotFrame
+                                    dotFrame.Parent = espScreenGui
+                                    activeHeadDots[otherPlayer] = dotFrame
+                                end
+                                dotFrame.Position = UDim2.fromOffset(headPos.X, headPos.Y)
+                                dotFrame.BackgroundColor3 = activeColor
+                                dotFrame.Visible = true
+                            elseif activeHeadDots[otherPlayer] then
+                                activeHeadDots[otherPlayer].Visible = false
+                            end
+                        elseif activeHeadDots[otherPlayer] then
+                            activeHeadDots[otherPlayer].Visible = false
+                        end
+
+                        -- 5. Names & Distance & Health Text
+                        if (Settings.ESPNames or Settings.ESPDistance or Settings.ESPHealthText) and onScreen then
+                            local textLabel = activeNames[otherPlayer]
+                            if not textLabel then
+                                textLabel = Instance.new("TextLabel")
+                                textLabel.BackgroundTransparency = 1
+                                textLabel.TextStrokeTransparency = 0
+                                textLabel.TextSize = 13
+                                textLabel.Font = Enum.Font.SourceSansBold
+                                textLabel.Parent = espScreenGui
+                                activeNames[otherPlayer] = textLabel
+                            end
+
+                            local labelText = ""
+                            if Settings.ESPNames then labelText = otherPlayer.DisplayName end
+                            if Settings.ESPHealthText then
+                                local hpVal = math.floor(humanoid.Health)
+                                labelText = labelText ~= "" and (labelText .. " [" .. hpVal .. " HP]") or ("[" .. hpVal .. " HP]")
+                            end
+                            if Settings.ESPDistance then
+                                local dist = math.floor((camera.CFrame.Position - cf.Position).Magnitude)
+                                labelText = labelText ~= "" and (labelText .. " [" .. dist .. "m]") or ("[" .. dist .. "m]")
+                            end
+
+                            textLabel.Text = labelText
+                            textLabel.TextColor3 = activeColor
+                            textLabel.Position = UDim2.fromOffset(screenPos.X, boxY - 15)
+                            textLabel.Visible = true
+                        elseif activeNames[otherPlayer] then
+                            activeNames[otherPlayer].Visible = false
+                        end
+
+                        -- 6. Tracers
+                        if Settings.ESPTracers and onScreen then
+                            local tracerFrame = activeTracers[otherPlayer]
+                            if not tracerFrame then
+                                tracerFrame = Instance.new("Frame")
+                                tracerFrame.BorderSizePixel = 0
+                                tracerFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+                                tracerFrame.Parent = espScreenGui
+                                activeTracers[otherPlayer] = tracerFrame
+                            end
+
+                            local screenBottom = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y)
+                            local targetPos = Vector2.new(screenPos.X, screenPos.Y)
+                            local dist = (targetPos - screenBottom).Magnitude
+                            local center = (screenBottom + targetPos) / 2
+                            local angle = math.atan2(targetPos.Y - screenBottom.Y, targetPos.X - screenBottom.X)
+
+                            tracerFrame.Size = UDim2.fromOffset(dist, 1)
+                            tracerFrame.Position = UDim2.fromOffset(center.X, center.Y)
+                            tracerFrame.Rotation = math.deg(angle)
+                            tracerFrame.BackgroundColor3 = activeColor
+                            tracerFrame.Visible = true
+                        elseif activeTracers[otherPlayer] then
+                            activeTracers[otherPlayer].Visible = false
+                        end
+
+                        -- 7. Skeletons
+                        if Settings.ESPSkeletons then
+                            if not activeSkeletons[otherPlayer] then activeSkeletons[otherPlayer] = {} end
+                            local pairsList = humanoid.RigType == Enum.HumanoidRigType.R15 and skeletonPairsR15 or skeletonPairsR6
+
+                            for i, pair in ipairs(pairsList) do
+                                local partA = character:FindFirstChild(pair[1])
+                                local partB = character:FindFirstChild(pair[2])
+                                local lineFrame = activeSkeletons[otherPlayer][i]
+                                if not lineFrame then
+                                    lineFrame = Instance.new("Frame")
+                                    lineFrame.BorderSizePixel = 0
+                                    lineFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+                                    lineFrame.Parent = espScreenGui
+                                    activeSkeletons[otherPlayer][i] = lineFrame
+                                end
+
+                                if partA and partB then
+                                    local posA, onScreenA = camera:WorldToViewportPoint(partA.Position)
+                                    local posB, onScreenB = camera:WorldToViewportPoint(partB.Position)
+
+                                    if onScreenA or onScreenB then
+                                        local p1 = Vector2.new(posA.X, posA.Y)
+                                        local p2 = Vector2.new(posB.X, posB.Y)
+                                        lineFrame.Size = UDim2.fromOffset((p2 - p1).Magnitude, 1.5)
+                                        lineFrame.Position = UDim2.fromOffset((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2)
+                                        lineFrame.Rotation = math.deg(math.atan2(p2.Y - p1.Y, p2.X - p1.X))
+                                        lineFrame.BackgroundColor3 = activeColor
+                                        lineFrame.Visible = true
+                                    else
+                                        lineFrame.Visible = false
+                                    end
+                                else
+                                    lineFrame.Visible = false
+                                end
+                            end
+                        elseif activeSkeletons[otherPlayer] then
+                            for _, lineFrame in pairs(activeSkeletons[otherPlayer]) do lineFrame:Destroy() end
+                            activeSkeletons[otherPlayer] = nil
+                        end
+
+                    else
+                        cleanupPlayer(otherPlayer)
+                    end
+                else
+                    cleanupPlayer(otherPlayer)
+                end
+            else
+                cleanupPlayer(otherPlayer)
+            end
+        end
+    end
+
+    -- Dynamic Aiming Calculation
+    local aimAllowed = (Settings.PracticeEnabled and Settings.AimKeyActive) or Settings.CamlockActive
+    currentAimTargetPlayer = nil
+
+    if Settings.AngelCamlockEnabled and angelTargetPlayer then
+        currentAimTargetPlayer = angelTargetPlayer
+    elseif aimAllowed then
+        local closestTarget = nil
+
+        if Settings.CamlockActive then
+            if camlockTargetPlayer then
+                local char = camlockTargetPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local part = char and char:FindFirstChild(Settings.TargetPart)
+                local isBlacklisted = BlacklistTable[camlockTargetPlayer.Name:lower()] or BlacklistTable[camlockTargetPlayer.DisplayName:lower()]
+                
+                if not (char and hum and hum.Health > 0 and part and not isBlacklisted) then
+                    camlockTargetPlayer = nil
+                else
+                    closestTarget = part
+                    currentAimTargetPlayer = camlockTargetPlayer
+                end
+            end
+
+            if not camlockTargetPlayer then
+                local viewportCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+                local bestValue = Settings.FOV
+
+                for _, otherPlayer in ipairs(Players:GetPlayers()) do
+                    if otherPlayer ~= player and otherPlayer.Character then
+                        local passesTeamCheck = not (Settings.TeamCheck and player.Team and otherPlayer.Team and otherPlayer.Team == player.Team)
+                        local isBlacklisted = BlacklistTable[otherPlayer.Name:lower()] or BlacklistTable[otherPlayer.DisplayName:lower()]
+
+                        if passesTeamCheck and not isBlacklisted then
+                            local character = otherPlayer.Character
+                            local humanoid = character:FindFirstChildOfClass("Humanoid")
+                            local targetPart = character:FindFirstChild(Settings.TargetPart)
+
+                            if humanoid and humanoid.Health > 0 and targetPart then
+                                local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+                                if onScreen then
+                                    local screenPos2D = Vector2.new(screenPos.X, screenPos.Y)
+                                    local crosshairDist = (screenPos2D - viewportCenter).Magnitude
+
+                                    if crosshairDist <= bestValue then
+                                        bestValue = crosshairDist
+                                        camlockTargetPlayer = otherPlayer
+                                        closestTarget = targetPart
+                                        currentAimTargetPlayer = otherPlayer
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            local viewportCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+            local bestValue = Settings.TargetPriority == "Closest to Crosshair" and Settings.FOV or math.huge
+
+            for _, otherPlayer in ipairs(Players:GetPlayers()) do
+                if otherPlayer ~= player and otherPlayer.Character then
+                    local passesTeamCheck = not (Settings.TeamCheck and player.Team and otherPlayer.Team and otherPlayer.Team == player.Team)
+                    local isBlacklisted = BlacklistTable[otherPlayer.Name:lower()] or BlacklistTable[otherPlayer.DisplayName:lower()]
+
+                    if passesTeamCheck and not isBlacklisted then
+                        local character = otherPlayer.Character
+                        local humanoid = character:FindFirstChildOfClass("Humanoid")
+                        local targetPart = character:FindFirstChild(Settings.TargetPart)
+
+                        if humanoid and humanoid.Health > 0 and targetPart then
+                            local worldDist = (camera.CFrame.Position - targetPart.Position).Magnitude
+                            if worldDist <= Settings.MaxDistance then
+                                local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+                                if onScreen then
+                                    local screenPos2D = Vector2.new(screenPos.X, screenPos.Y)
+                                    local crosshairDist = (screenPos2D - viewportCenter).Magnitude
+
+                                    if crosshairDist <= Settings.FOV then
+                                        if Settings.TargetPriority == "Closest to Crosshair" then
+                                            if crosshairDist < bestValue then
+                                                bestValue = crosshairDist
+                                                closestTarget = targetPart
+                                                currentAimTargetPlayer = otherPlayer
+                                            end
+                                        elseif Settings.TargetPriority == "Closest Distance" then
+                                            if worldDist < bestValue then
+                                                bestValue = worldDist
+                                                closestTarget = targetPart
+                                                currentAimTargetPlayer = otherPlayer
+                                            end
+                                        elseif Settings.TargetPriority == "Lowest Health" then
+                                            if humanoid.Health < bestValue then
+                                                bestValue = humanoid.Health
+                                                closestTarget = targetPart
+                                                currentAimTargetPlayer = otherPlayer
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if closestTarget then
+            local predictedPos = closestTarget.Position
+            local rootPart = closestTarget.Parent:FindFirstChild("HumanoidRootPart")
+            if rootPart then
+                predictedPos = predictedPos + (rootPart.AssemblyLinearVelocity * Settings.Prediction)
+            end
+
+            local targetCFrame = CFrame.new(camera.CFrame.Position, predictedPos)
+            if Settings.Smoothness <= 0 then
+                camera.CFrame = targetCFrame
+            else
+                local smoothnessAlpha = math.clamp(1 / Settings.Smoothness, 0.01, 1)
+                camera.CFrame = camera.CFrame:Lerp(targetCFrame, smoothnessAlpha)
+            end
+        end
+    end
+
+    -- Hitmarker Tracker ONLY for Currently Locked Target
+    if currentAimTargetPlayer and currentAimTargetPlayer.Character then
+        local hum = currentAimTargetPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            local currentHp = hum.Health
+            local lastHp = targetHealthMemory[currentAimTargetPlayer]
+
+            if lastHp and currentHp < lastHp then
+                local dmg = lastHp - currentHp
+                playHitMarker(currentAimTargetPlayer, dmg)
+            end
+            targetHealthMemory[currentAimTargetPlayer] = currentHp
+        end
+    end
+end)
